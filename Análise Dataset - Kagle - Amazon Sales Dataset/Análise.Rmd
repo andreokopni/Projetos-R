@@ -1,0 +1,44 @@
+
+```{r}
+# rm(list = ls())
+# Preparando o ambiente
+
+library(openxlsx)
+library(lmtest)
+library(dplyr)
+
+x = read.csv("amazon.csv")
+
+df = data.frame(x$product_id, as.double(gsub(",", "", gsub("₹", "", x$discounted_price))), as.double(gsub(",", "", gsub("₹", "", x$actual_price))), as.double(x$rating), as.integer(gsub(",", "", x$rating_count)))
+rm(x)
+
+colnames(df) <- c("id_prod", "preco_final", "preco_original", "avaliacao", "num_aval")
+df["desconto"] = 1-df$preco_final/df$preco_original
+df["1-desconto"] = 1-df$desconto
+
+head(df)
+
+```
+
+```{r}
+
+plot(df$desconto, df$avaliacao)
+
+mod1 = lm(df$avaliacao ~ df$desconto)
+
+summary(mod1)
+reset(mod1)
+shapiro.test(mod1$residuals)
+bptest(mod1)
+
+mod2 = lm(df$avaliacao ~ (df$"1-desconto"))
+
+summary(mod2)
+reset(mod2)
+shapiro.test(mod2$residuals)
+bptest(mod2)
+
+## dead end      
+          
+```
+

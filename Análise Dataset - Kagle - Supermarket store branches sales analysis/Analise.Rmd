@@ -1,0 +1,103 @@
+```{r echo=FALSE}
+
+# rm(list = ls())
+
+library(openxlsx)
+library(dplyr)
+library(lmtest)
+library(car)
+
+vendas = read.csv("Stores.csv")
+
+head(vendas)
+
+```
+
+Modelo 1: linear sem relação
+```{r}
+
+mod1 = lm(vendas$Store_Sales ~ vendas$Items_Available + vendas$Store_Area + vendas$Daily_Customer_Count)
+
+reset(mod1)
+shapiro.test(mod1$residuals)
+bptest(mod1)
+vif(mod1)
+
+mod1.1 = lm(vendas$Store_Area ~vendas$Items_Available)
+
+summary(mod1.1)
+reset(mod1.1)
+shapiro.test(mod1.1$residuals)
+bptest(mod1.1) # tem heteroscedasticidade
+
+plot(vendas$Items_Available, vendas$Store_Area)
+
+```
+
+```{r}
+
+mod2 = lm(vendas$Store_Sales ~ vendas$Items_Available + vendas$Store_Area * vendas$Daily_Customer_Count)
+
+reset(mod2)
+shapiro.test(mod2$residuals)
+bptest(mod2)
+vif(mod2, type = "predictor")
+```
+
+```{r}
+
+mod3.1 = lm(vendas$Store_Sales ~ vendas$Store_Area + vendas$Daily_Customer_Count)
+
+summary(mod3.1)
+
+mod3 = lm(vendas$Store_Sales ~ vendas$Items_Available + vendas$Daily_Customer_Count)
+
+reset(mod3) #ok
+shapiro.test(mod3$residuals) #nok
+bptest(mod3) #ok
+vif(mod3) #ok
+
+```
+
+```{r}
+
+mod4 = lm(vendas$Store_Sales ~ log(vendas$Items_Available) + log(vendas$Daily_Customer_Count))
+
+reset(mod4) #ok
+shapiro.test(mod4$residuals) #nok
+bptest(mod4) #ok
+vif(mod4) #ok
+
+```
+
+```{r}
+
+mod5 = lm(vendas$Store_Sales ~ sqrt(vendas$Items_Available) + sqrt(vendas$Daily_Customer_Count))
+
+reset(mod5) #ok
+shapiro.test(mod5$residuals) #nok
+bptest(mod5) #ok
+vif(mod5) #ok
+
+hist(mod4$residuals)
+
+```
+
+```{r}
+
+hist(sqrt(vendas$Store_Sales))
+
+mod5 = lm(vendas$Store_Sales ~ sqrt(vendas$Items_Available) + sqrt(vendas$Daily_Customer_Count))
+
+reset(mod5) #ok
+shapiro.test(mod5$residuals) #nok
+bptest(mod5) #ok
+vif(mod5) #ok
+
+plot(mod5$fitted.values, mod5$residuals, col = "darkgrey")
+abline(mod5$coefficients, col = "red")
+
+
+
+```
+
