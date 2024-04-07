@@ -1,0 +1,216 @@
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+rm(list = ls())
+
+library(quantmod)
+library(openxlsx)
+library(dplyr)
+library(rlist)
+
+
+# Escolhido em 24/03/2024 as empresas que tiveram liquidez diferente de zero nos ultimos 2 meses (fonte: Fundamentus)
+tickers = read.xlsx("tickers.xlsx")
+
+# Desde o segundo semestre de 2020 para pegar as informações após a covid até o fim de 2023
+ibov = getSymbols("^BVSP", from = as.Date("2020-07-01"), to = as.Date("2023-12-31"), warnings = FALSE, auto.assign = FALSE)[,6]
+
+cotacoes = NULL
+volume = NULL
+
+for(cont in 1:dim(tickers)[1])
+{
+  temp = getSymbols(tickers[cont,], from = as.Date("2020-07-01"), to = as.Date("2023-12-31"), warnings = FALSE, auto.assign = FALSE)
+  cotacoes <- cbind(cotacoes, temp[,6])
+  volume <- cbind(volume, temp[,5])
+
+}
+
+rm(temp)
+rm(tickers)
+rm(cont)
+
+colnames(cotacoes) <- gsub(".SA.Adjusted", "", names(cotacoes))
+colnames(volume) <- gsub(".SA.Volume", "", names(volume))
+colnames(ibov) <- gsub(".Adjusted", "", names(ibov))
+
+```
+
+Dados obtidos:
+
+```{r echo=FALSE}
+
+message("Cotações da IBOV (Amostra)")
+head(ibov)
+message("\nPreços de fechamento (Amostra)")
+head(cotacoes[,1:5])
+message("\nVolume de negociações (Amostra)")
+head(volume[,1:5])
+
+```
+
+Calculando os retornos: $retorno_t = ln(\frac{cotacao_t}{cotacao_{t-1}})$
+
+Para o calculo dos valores alfa, beta, R2 e StdDev, usamos o modelo de regressão linear para cada uma das ações.
+
+$$
+Retorno_{ação} = \alpha + \beta.Retorno_{ibov} + \epsilon
+$$
+
+**Alfa**: Intercepto do modelo de regressão. Significa o quanto uma ação performou acima do índice de mercado (IBOV). Quanto *maior* melhor.\
+**Beta**: Coeficiente de regressão do retorno do mercado (ibov). O quanto a mais a ação sobe/desce em relação ao índice de referência (IBOV). Quanto *maior* melhor.\
+**R2**: O R² ajustado do modelo obtido. Significa o quão confiáveis o alfa e o beta são, ou seja, o quanto é possível prever da ação ao olhar o IBOV. Quanto *maior* melhor.\
+**StdDev**: O desvio padrão dos erros $\epsilon$ do modelo. É a volatilidade (ou risco) da ação. Quanto *menor* melhor.\
+**Sharpe**: É a razão de Sharpe, calculada como $Sharpe = \frac{retorno - taxa\ livre\ de\ risco}{StdDev}$. A taxa mostra o quanto a ação performou acima da taxa livre de risco (neste caso a SELIC de 10,75%), ajustada pelo sua volatilidade. Quanto *maior* melhor.\
+**Liquidez**: É o volume de negociações dos papeis na bolsa. Usado em base logarítmica: log(volume de negociações). Quanto *maior* melhor.
+
+```{r echo=FALSE}
+
+r_ibov = log(ibov/lag(ibov))[-1] #-1 no index do vetor pra tirar a primeira linha dos retornos (não tem dia anterior)
+r_cotacoes = log(cotacoes/lag(cotacoes))[-1] #-1 no index do vetor pra tirar a primeira linha dos retornos (não tem dia anterior)
+
+criterios = data.frame(Alfa = NA, Beta = NA, R2 = NA, StdDev = NA, Sharpe = NA, Liquidez = NA)
+
+
+for(cont in 1:ncol(r_cotacoes))
+{
+  modelo <- lm(r_cotacoes[,cont] ~ r_ibov)
+  
+  criterios[cont, "Alfa"] = modelo$coefficients[1]
+  criterios[cont, "Beta"] = modelo$coefficients[2]
+  criterios[cont, "R2"] = summary(modelo)$adj.r.squared
+  criterios[cont, "StdDev"] = sd(modelo$residuals)
+  # Calculando Sharpe com taxa livre de risco = 10,75% pois é a selic no momento (28/03/2024)
+  criterios[cont, "Sharpe"] = (sum(r_cotacoes[,cont], na.rm = TRUE) - 0.1075)/criterios[cont, "StdDev"]
+  criterios[cont, "Liquidez"] = log(mean(volume[,cont], na.rm = TRUE))
+  
+  rownames(criterios)[cont] = colnames(r_cotacoes)[cont]
+    
+}
+
+rm(modelo)
+rm(cont)
+
+head(criterios)
+
+```
+
+Modelo TOPSIS:\
+Definindo maximização para: Alfa, Beta, R2, SHarpe e Liquidez\
+Definindo minimização para: StdDev
+
+Pesos para cada critério:\
+**Alfa**: 5%\
+**Beta**: 10%\
+**R2**: 20%\
+**StdDev**: 25%\
+**Sharpe**: 20%\
+**Liquidez**: 20%
+
+```{r echo=FALSE}
+
+matriz = matriz_original = criterios
+tipo = c("max", "max", "max", "min", "max", "max")
+peso = c( 0.05, 0.10, 0.20, 0.25, 0.20, 0.20)
+
+```
+
+Para normalizar, utilizamos a seguinte formula
+
+$$
+critero\_normalizado_i = \frac{criterio_i}{\sqrt{\sum_{j}{criterios_j^2}}}, \quad{\text{para todos os 'i' critérios}}
+$$
+
+A matriz normalizada fica da seguinte forma:
+
+```{r echo=FALSE}
+
+#Normalizando a matriz:
+for (x in 1:ncol(matriz))
+{
+  matriz[,x] <- matriz[,x] / sqrt(sum(matriz[,x]^2))
+}
+rm(x)
+
+head(matriz)
+
+```
+
+Matriz ponderada pelos pesos:
+
+```{r echo=FALSE}
+
+matriz = sweep(matriz, 2, peso, "*")
+head(format(matriz, digits = 3))
+
+```
+
+Definindo a solução ideal e a solução ideal negativa
+
+```{r echo=FALSE}
+
+s = matrix(ncol = ncol(matriz))
+sn = matrix(ncol = ncol(matriz))
+
+for(x in 1:ncol(matriz))
+{
+  if(tipo[x] == "max")
+  {
+    s[x] <- max(matriz[,x])
+    sn[x] <- min(matriz[,x])
+  }
+  else if (tipo[x] == "min")
+  {
+    s[x] <- min(matriz[x])
+    sn[x] <- max(matriz[x])
+  }
+}
+
+print(data.frame(matrix(format(c(s,sn), digits = 3), nrow = 2, byrow = FALSE, dimnames = list(c("Ideal", "Ideal negativa"), colnames(matriz)))))
+
+```
+
+Para o calculo da distância para o ideal, usamos:
+
+$$
+Score_{alternativa} = \sqrt{\sum_n{(critério\_alternativa_n-criterio\_ideal_n)^2}}
+$$
+
+Alternativamente, o calculo da distância para a alternativa ideal nula é:
+
+$$
+Score_{alternativa\_nula} = \sqrt{\sum_n{(critério\_alternativa_n-critério\_ideal\_nulo_n)^2}}
+$$
+
+Distância para as soluções:
+
+```{r echo=FALSE}
+
+matriz[c("ideal", "ideal_nula")] <- c(sqrt(rowSums(sweep(matriz, 2, s, "-")^2)), sqrt(rowSums(sweep(matriz, 2, sn, "-")^2)))
+
+head(format(matriz, digits = 2))
+      
+```
+
+Para calcular o score, utilizamos a seguinte forma:
+
+$$
+Score = \frac{(Distancia\_negativa)}{(Distancia\_ideal+Distancia\_negativa)}
+$$
+
+Assim, a matriz de decisão original fica da seguinte forma:
+
+```{r echo=FALSE}
+
+matriz_original$Score = matriz$ideal_nula/(matriz$ideal+matriz$ideal_nula)
+head(format(matriz_original, digits = 2))
+
+```
+
+Ordenando pelo Score, temos a seguinte prioridade para decisão:
+
+```{r echo=FALSE}
+
+matriz_original$Posicao =  rank(-matriz_original$Score)
+print(format(matriz_original[order(matriz_original$Posicao),], digits = 3))
+
+```
